@@ -11,9 +11,15 @@
 
 ⚠️ **pyfastGEAR is currently under active development.**
 
-While the software has been tested extensively on a limited number of datasets, it has not yet been validated across the full range of use cases supported by the original implementation. Results should therefore be interpreted with caution.
+While the software has been tested extensively on a limited number of datasets, it has not been thoroughly tested for routine use. Examine results closely and interpret them with caution.
 
 If you encounter unexpected behaviour or unusual results, please report them by opening an issue on this repository.
+
+## Usage
+
+pyfastGEAR relies on `python >= 3.10`, `numpy` and `scipy`. Make sure these libraries are installed and accessible to python.
+
+Run with `python3 pyfastGEAR-runner.py --output-dir <RESULTS_FOLDER> <INPUT_FASTA> <OUTPUT_PICKLE>`. `<OUTPUT_PICKLE>` is analogous to the .mat output file of fastGEAR and is not particularly useful, provide `--output-dir` to get more useful results. Specifications can be provided with a fastGEAR input specifications file, using `--input-specs-file`, or manually with command line flags (see `--help`). 
 
 ## Citation
 

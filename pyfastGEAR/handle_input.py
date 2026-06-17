@@ -9,12 +9,12 @@ from .models import FastGearConfig
 
 def build_argument_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
-        description="Run fastGEAR on a FASTA alignment and produce final lineage/recombination outputs.",
+        description="Run pyfastGEAR on a FASTA alignment and produce final lineage/recombination outputs.",
         epilog=(
             "Examples:\n"
-            "  python -m pyfastGEAR2 alignment.fa results.pkl\n"
-            "  python -m pyfastGEAR2 alignment.fa results.pkl --output-dir results_output\n"
-            "  python -m pyfastGEAR2 alignment.fa results.pkl --input-specs-file fG_input_specs.txt"
+            "  python -m pyfastGEAR alignment.fa results.pkl\n"
+            "  python -m pyfastGEAR alignment.fa results.pkl --output-dir results_output\n"
+            "  python -m pyfastGEAR alignment.fa results.pkl --input-specs-file fG_input_specs.txt"
         ),
         formatter_class=RawDescriptionHelpFormatter,
     )
