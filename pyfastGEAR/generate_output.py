@@ -39,7 +39,7 @@ def write_partition(user_data: Any, output_file: Path) -> None:
 
 
 def count_recent_recombinations(user_data: Any) -> dict[str, Any]:
-    if len(user_data.snp_positions) == 1:
+    if len(user_data.snp_positions) <= 1:
         return {"nRecent": 0}
     partition = np.asarray(user_data.partition, dtype=np.int64)
     grouped_partition = np.asarray(user_data.grouped_partition, dtype=np.int64)
@@ -73,7 +73,7 @@ def count_recent_recombinations(user_data: Any) -> dict[str, Any]:
 def write_recombinations_to_text_file(user_data: Any, output_file: Path, type_index: int) -> None:
     output_file.parent.mkdir(parents=True, exist_ok=True)
     n_snps = len(user_data.snp_positions)
-    if n_snps == 1:
+    if n_snps <= 1:
         pop_structure_cleaned = np.zeros((0, 0), dtype=np.uint8)
         lineage_structure_cleaned = np.zeros((0, 0), dtype=np.uint8)
         lineage_ancestral_log_bf: list[np.ndarray] = []
@@ -103,7 +103,7 @@ def write_recombinations_to_text_file(user_data: Any, output_file: Path, type_in
     with output_file.open("w", encoding="utf-8") as handle:
         handle.write(f"{header}\n")
         handle.write(f"{first_row}\n")
-        if n_snps == 1:
+        if n_snps <= 1:
             return
         n_rows = pop_structure.shape[0]
         for row_index in range(1, n_rows + 1):

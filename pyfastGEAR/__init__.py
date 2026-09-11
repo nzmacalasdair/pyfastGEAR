@@ -1,4 +1,4 @@
-"""pyfastGEAR2 package."""
+"""pyfastGEAR package."""
 
 from .models import BapsData, FastGearConfig, PreprocessingResult, UserData
 

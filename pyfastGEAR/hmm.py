@@ -118,6 +118,8 @@ def pre_calculate_trans_matrices(
     snp_positions: np.ndarray,
     num_smallest_to_prevent: int = 0,
 ) -> dict[int, np.ndarray]:
+    if len(snp_positions) < 2:
+        raise ValueError("At least two SNP positions are required for HMM analysis")
     if not isinstance(trans_pars, Mapping):
         phi = float(trans_pars)
         rho = phi ** (1.0 / (total_sequence_length - 1))
@@ -140,6 +142,13 @@ def pre_calculate_trans_matrices(
             if state_index == home:
                 transition_probs_single_step[state_index - 1, :] = (1.0 - rho0) / (n_states - 1)
                 transition_probs_single_step[state_index - 1, state_index - 1] = rho0
+            elif n_states == 2:
+                # With one real lineage and one empty alternative state there
+                # are no non-home, non-self states to receive the remaining
+                # transition mass. MATLAB's division by zero here produces
+                # temporary Inf/NaN values that are immediately overwritten.
+                transition_probs_single_step[state_index - 1, home - 1] = (1.0 - rho) * a
+                transition_probs_single_step[state_index - 1, state_index - 1] = rho
             else:
                 transition_probs_single_step[state_index - 1, :] = (1.0 - rho) * (1.0 - a) / (n_states - 2)
                 transition_probs_single_step[state_index - 1, home - 1] = (1.0 - rho) * a
@@ -260,6 +269,8 @@ def hmm_recombination_analysis(
     sampling_uniforms: tuple[float, np.ndarray] | None = None,
     return_debug: bool = False,
 ) -> tuple[np.ndarray, float, np.ndarray] | tuple[np.ndarray, float, np.ndarray, dict[str, np.ndarray]]:
+    if len(c.snpPositions) < 2:
+        raise ValueError("At least two SNP positions are required for HMM analysis")
     if np.any(c.COUNTS < 0):
         raise ValueError("Negative counts detected")
 
