@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-from .generate_output import infer_output_dir
 from .handle_input import config_from_args, has_advanced_stage_selection
 from .pipeline import (
     run_preprocessing_and_clustering,
@@ -14,8 +13,6 @@ from .pipeline import (
 
 def main(argv: list[str] | None = None) -> int:
     config = config_from_args(argv)
-    if config.output_dir is None:
-        config.output_dir = infer_output_dir(config.output_file)
 
     if has_advanced_stage_selection(config):
         if config.run_recombination_lineage is not None:

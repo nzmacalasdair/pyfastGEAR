@@ -10,14 +10,13 @@ import numpy as np
 @dataclass(slots=True)
 class FastGearConfig:
     input_file: Path
-    output_file: Path
+    output_dir: Path
     input_specs_file: Path | None = None
     partition_file: str = "-"
     n_iterations: int = 15
     n_clust_list: list[int] = field(default_factory=lambda: [10, 15, 20, 30])
     run_all_upper_bounds: bool = False
     reduced_output: bool = True
-    output_dir: Path | None = None
     run_clustering: bool = False
     run_relationships: bool = False
     run_recombination: bool = False
@@ -26,9 +25,7 @@ class FastGearConfig:
     run_recombination_lineage: int | None = None
 
     def resolved_output_dir(self) -> Path:
-        if self.output_dir is not None:
-            return self.output_dir
-        return self.output_file.resolve().parent / "output"
+        return self.output_dir
 
 
 @dataclass(slots=True)

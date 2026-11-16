@@ -10,10 +10,6 @@ from .models import FastGearConfig
 from .segments import identify_segments
 
 
-def infer_output_dir(output_file: Path) -> Path:
-    return output_file.resolve().parent / "output"
-
-
 def ensure_output_dir(config: FastGearConfig) -> Path:
     output_dir = config.resolved_output_dir()
     output_dir.mkdir(parents=True, exist_ok=True)

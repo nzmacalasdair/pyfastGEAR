@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import replace
+import warnings
 
 import numpy as np
 from scipy.cluster.hierarchy import linkage as scipy_linkage
@@ -13,6 +14,12 @@ from .models import BapsData, UserData
 
 LOGML_EPS = 1e-5
 NEG_INF = -1e50
+# These are safety limits only.  Normal convergence still follows the MATLAB
+# stage schedule below.  The limits prevent a pathological state from making
+# a batch run unbounded.
+MAX_INDMIX_ITERATIONS = 10000
+MAX_ROUND7_PASSES = 10000
+MAX_ROUND7_SWITCHES = 100000
 
 
 def get_baps_input_block_from_snp_data(
@@ -55,7 +62,10 @@ def update_struct(c: BapsData) -> BapsData:
             np.arange(1, ninds + 1, dtype=np.int64),
         ]
     )
-    z, dist = new_get_distances(c.data, rows_from_ind)
+    # The reference includes strain IDs in its distance input, but not in
+    # the SNP matrix used for counts and likelihoods.
+    distance_data = np.column_stack([c.data, np.arange(1, ninds + 1)])
+    z, dist = new_get_distances(distance_data, rows_from_ind)
     return replace(c, rowsFromInd=rows_from_ind, rows=rows, Z=z, dist=dist)
 
 
@@ -316,13 +326,72 @@ def ind_mix(
         state.pop_logml = state.compute_population_logml(np.arange(1, int(npops_now) + 1))
         state.logdiff = np.full((c.rows.shape[0], int(npops_now)), -np.inf, dtype=np.float64)
 
+        # Keep a complete, internally consistent snapshot.  A partition on
+        # its own is insufficient because the move-delta cache and count
+        # arrays are part of the state used by subsequent rounds.
+        best_run_logml = float(logml)
+        best_run_partition = state.partition.copy()
+        best_run_counts = state.counts.copy()
+        best_run_sumcounts = state.sumcounts.copy()
+        best_run_pop_logml = state.pop_logml.copy()
+        best_run_logdiff = state.logdiff.copy()
+
+        def save_best_run_state() -> None:
+            nonlocal best_run_logml
+            nonlocal best_run_partition, best_run_counts
+            nonlocal best_run_sumcounts, best_run_pop_logml, best_run_logdiff
+            if not np.isfinite(logml) or logml <= best_run_logml + LOGML_EPS:
+                return
+            best_run_logml = float(logml)
+            best_run_partition = state.partition.copy()
+            best_run_counts = state.counts.copy()
+            best_run_sumcounts = state.sumcounts.copy()
+            best_run_pop_logml = state.pop_logml.copy()
+            best_run_logdiff = state.logdiff.copy()
+
+        def restore_best_run_state() -> None:
+            nonlocal logml
+            logml = best_run_logml
+            state.partition = best_run_partition.copy()
+            state.counts = best_run_counts.copy()
+            state.sumcounts = best_run_sumcounts.copy()
+            state.pop_logml = best_run_pop_logml.copy()
+            state.logdiff = best_run_logdiff.copy()
+
         n_round_types = 7
         tried = np.zeros(n_round_types, dtype=np.int64)
         round_types = [1, 1]
         stage = 1
         ready = False
+        guarded = False
+        outer_iterations = 0
+        seen_outer_states: set[tuple[int, tuple[int, ...], bytes]] = set()
 
-        while not ready:
+        while not ready and not guarded:
+            outer_iterations += 1
+            if outer_iterations > MAX_INDMIX_ITERATIONS:
+                guarded = True
+                warnings.warn(
+                    "ind_mix reached its outer-iteration safety limit for "
+                    f"maximum population count {int(npops_now)}; returning "
+                    "the best valid partition found.",
+                    RuntimeWarning,
+                    stacklevel=2,
+                )
+                break
+
+            outer_signature = (stage, tuple(round_types), state.partition.tobytes())
+            if outer_signature in seen_outer_states:
+                guarded = True
+                warnings.warn(
+                    "ind_mix detected a repeated clustering state for "
+                    f"maximum population count {int(npops_now)} at stage "
+                    f"{stage}; returning the best valid partition found.",
+                    RuntimeWarning,
+                    stacklevel=2,
+                )
+                break
+            seen_outer_states.add(outer_signature)
             changes = False
 
             for round_type in round_types:
@@ -342,6 +411,7 @@ def ind_mix(
                             tried[:] = 0
                             state.update_global_variables(ind, best_index, diff_in_counts)
                             logml += max_change
+                            save_best_run_state()
                             if logml > worst_logml:
                                 partition_summary, added = add_to_summary(logml, partition_summary, worst_index, state.partition)
                                 if added:
@@ -369,6 +439,7 @@ def ind_mix(
                         tried[:] = 0
                         state.update_global_variables2(best_i1, best_i2, best_diff)
                         logml += max_change
+                        save_best_run_state()
                         if logml > worst_logml:
                             partition_summary, added = add_to_summary(logml, partition_summary, worst_index, state.partition)
                             if added:
@@ -394,9 +465,12 @@ def ind_mix(
                         candidate = float(changes_now.reshape(-1)[flat_index])
                         if candidate > max_change:
                             max_change = candidate
-                            moving_pop2 = flat_index % npops2 + 1
+                            # MATLAB selects from a column-major linearized
+                            # matrix.  changes_now has split populations in
+                            # rows and target populations in columns.
+                            moving_pop2 = flat_index // changes_now.shape[1] + 1
                             moving_inds = inds2[t2 == moving_pop2]
-                            target_pop = flat_index // npops2 + 1
+                            target_pop = flat_index % changes_now.shape[1] + 1
                     if max_change > LOGML_EPS and moving_inds.size > 0:
                         changes = True
                         tried[:] = 0
@@ -404,6 +478,7 @@ def ind_mix(
                         diff_in_counts = compute_diff_in_counts(rows, state.counts.shape[0], state.counts.shape[1], c.data)
                         state.update_global_variables3(moving_inds, diff_in_counts, target_pop)
                         logml += max_change
+                        save_best_run_state()
                         if logml > worst_logml:
                             partition_summary, added = add_to_summary(logml, partition_summary, worst_index, state.partition)
                             if added:
@@ -447,6 +522,7 @@ def ind_mix(
                             tried[:] = 0
                             changed_now = True
                             changes = True
+                            save_best_run_state()
                             if logml > worst_logml:
                                 partition_summary, added = add_to_summary(logml, partition_summary, worst_index, state.partition)
                                 if added:
@@ -466,6 +542,8 @@ def ind_mix(
                     j = 0
                     pops = rng.permutation(state.counts.shape[2]) + 1
                     changed_now = False
+                    round7_passes = 0
+                    round7_switches = 0
                     if empty_pop == -1:
                         j = state.counts.shape[2]
                     while j < state.counts.shape[2]:
@@ -490,7 +568,19 @@ def ind_mix(
                         state.update_global_variables3(moving_inds, diff_in_counts, empty_pop)
 
                         changed = True
+                        round7_seen_states = {state.partition.tobytes()}
                         while changed:
+                            round7_passes += 1
+                            if round7_passes > MAX_ROUND7_PASSES:
+                                guarded = True
+                                warnings.warn(
+                                    "ind_mix reached the round type 7 pass "
+                                    f"limit for maximum population count {int(npops_now)}; "
+                                    "returning the best valid partition found.",
+                                    RuntimeWarning,
+                                    stacklevel=2,
+                                )
+                                break
                             changed = False
                             move_scores = state.calculate_pairwise_switch_deltas(inds2, pop, empty_pop)
                             best_index = int(np.argmax(move_scores))
@@ -501,16 +591,43 @@ def ind_mix(
                             else:
                                 target = pop
                             if max_change > LOGML_EPS:
+                                round7_switches += 1
+                                if round7_switches > MAX_ROUND7_SWITCHES:
+                                    guarded = True
+                                    warnings.warn(
+                                        "ind_mix reached the round type 7 switch "
+                                        f"limit for maximum population count {int(npops_now)}; "
+                                        "returning the best valid partition found.",
+                                        RuntimeWarning,
+                                        stacklevel=2,
+                                    )
+                                    break
                                 rows = np.arange(c.rows[moving_ind - 1, 0], c.rows[moving_ind - 1, 1] + 1)
                                 diff_in_counts = compute_diff_in_counts(rows, state.counts.shape[0], state.counts.shape[1], c.data)
                                 state.update_global_variables3(np.array([moving_ind], dtype=np.int64), diff_in_counts, target)
                                 changed = True
                                 total_change += max_change
+                                state_signature = state.partition.tobytes()
+                                if state_signature in round7_seen_states:
+                                    guarded = True
+                                    warnings.warn(
+                                        "ind_mix detected a repeated state during round "
+                                        f"type 7 for maximum population count {int(npops_now)}; "
+                                        "returning the best valid partition found.",
+                                        RuntimeWarning,
+                                        stacklevel=2,
+                                    )
+                                    break
+                                round7_seen_states.add(state_signature)
+
+                        if guarded:
+                            break
 
                         if total_change > LOGML_EPS:
                             changes = True
                             changed_now = True
                             logml += total_change
+                            save_best_run_state()
                             tried[:] = 0
                             if logml > worst_logml:
                                 partition_summary, added = add_to_summary(logml, partition_summary, worst_index, state.partition)
@@ -528,6 +645,9 @@ def ind_mix(
                     if not changed_now:
                         tried[round_type - 1] = 1
 
+                if guarded:
+                    break
+
             if not changes:
                 stage += 1
                 if stage > 5:
@@ -543,6 +663,9 @@ def ind_mix(
                     round_types = [4, 3, 1]
                 else:
                     round_types = [6, 7, 2, 3, 4, 1]
+
+        if guarded:
+            restore_best_run_state()
 
         npops_now = state.remove_empty_populations()
         state.pop_logml = state.compute_population_logml(np.arange(1, npops_now + 1))
@@ -565,6 +688,9 @@ def ind_mix(
 
 
 def new_get_distances(data: np.ndarray, rows_from_ind: int) -> tuple[np.ndarray, np.ndarray]:
+    # MATLAB's uint8 conversion saturates rather than wrapping.  This also
+    # maps nonpositive missing codes to zero and strain IDs above 255 to 255.
+    data = np.clip(data, 0, 255).astype(np.uint8)
     ninds = data.shape[0]
     pairs = [(a, b) for a in range(ninds - 1) for b in range(a + 1, ninds)]
     dist = np.zeros(len(pairs), dtype=np.float64)
@@ -933,8 +1059,11 @@ class _IndMixState:
         return ranking[np.argsort(ranking[:, 1]), 0].astype(np.int64)[::-1]
 
     def find_empty_pop(self) -> tuple[int, np.ndarray]:
+        """Return the first unused one-based population label, or -1 if full."""
         pops = np.unique(self.partition)
         if len(pops) == self.counts.shape[2]:
             return -1, pops
         pop_diff = np.diff(np.concatenate([[0], pops, [self.counts.shape[2] + 1]]))
-        return int(np.min(np.where(pop_diff > 1)[0])), pops
+        # MATLAB's find returns a one-based index, which here is also the
+        # first missing label; NumPy's index needs the explicit offset.
+        return int(np.flatnonzero(pop_diff > 1)[0]) + 1, pops

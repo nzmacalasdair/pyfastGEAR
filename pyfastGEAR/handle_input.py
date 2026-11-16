@@ -12,14 +12,14 @@ def build_argument_parser() -> argparse.ArgumentParser:
         description="Run pyfastGEAR on a FASTA alignment and produce final lineage/recombination outputs.",
         epilog=(
             "Examples:\n"
-            "  python -m pyfastGEAR alignment.fa results.pkl\n"
-            "  python -m pyfastGEAR alignment.fa results.pkl --output-dir results_output\n"
-            "  python -m pyfastGEAR alignment.fa results.pkl --input-specs-file fG_input_specs.txt"
+            "  python -m pyfastGEAR alignment.fa results\n"
+            "  python -m pyfastGEAR alignment.fa results_output --full-output\n"
+            "  python -m pyfastGEAR alignment.fa results --input-specs-file fG_input_specs.txt"
         ),
         formatter_class=RawDescriptionHelpFormatter,
     )
     parser.add_argument("input_file", type=Path, help="Input FASTA alignment")
-    parser.add_argument("output_file", type=Path, help="Output run-state pickle")
+    parser.add_argument("output_dir", type=Path, help="Results folder containing lineage and recombination outputs")
     parser.add_argument(
         "--input-specs-file",
         type=Path,
@@ -48,12 +48,6 @@ def build_argument_parser() -> argparse.ArgumentParser:
         "--full-output",
         action="store_true",
         help="Write detailed intermediate artifacts in addition to the main outputs",
-    )
-    parser.add_argument(
-        "--output-dir",
-        type=Path,
-        default=None,
-        help="Directory for text outputs and optional artifacts",
     )
 
     advanced = parser.add_argument_group("advanced debugging")
@@ -123,16 +117,23 @@ def config_from_args(argv: list[str] | None = None) -> FastGearConfig:
     parser = build_argument_parser()
     args = parser.parse_args(argv)
 
+    partial_stage = any((args.run_clustering, args.run_relationships,
+                         args.run_recombination, args.run_significance,
+                         args.run_recombination_lineage is not None))
+    if partial_stage and not args.full_output:
+        parser.error("partial-stage debugging requires --full-output")
+    if args.output_dir.exists() and not args.output_dir.is_dir():
+        parser.error(f"output destination is not a directory: {args.output_dir}")
+
     config = FastGearConfig(
         input_file=args.input_file,
-        output_file=args.output_file,
+        output_dir=args.output_dir,
         input_specs_file=args.input_specs_file,
         partition_file=args.partition_file,
         n_iterations=args.n_iterations,
         n_clust_list=list(args.n_clust_list),
         run_all_upper_bounds=args.run_all_upper_bounds,
         reduced_output=not args.full_output,
-        output_dir=args.output_dir,
         run_clustering=args.run_clustering,
         run_relationships=args.run_relationships,
         run_recombination=args.run_recombination,
@@ -143,6 +144,8 @@ def config_from_args(argv: list[str] | None = None) -> FastGearConfig:
 
     if args.input_specs_file is not None:
         apply_legacy_specs(config, args.input_specs_file)
+    if args.full_output:
+        config.reduced_output = False
 
     return config
 

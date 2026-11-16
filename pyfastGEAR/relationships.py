@@ -21,6 +21,7 @@ def inspect_cluster_relationships(
     snp_data: np.ndarray,
     output_dir: Path,
     analyse_lineages: bool = False,
+    reduced_output: bool = True,
 ) -> tuple[UserData, list[list[np.ndarray | None]]]:
     partition = reorder_cluster_labels(np.asarray(user_data.partition, dtype=np.int64))
     user_data = replace(user_data, partition=partition)
@@ -75,7 +76,8 @@ def inspect_cluster_relationships(
             all_pairwise_marginals[cluster1 - 1][cluster2 - 1] = marginals
 
     prefix = "lineage_comparison" if analyse_lineages else "cluster_comparison"
-    save_pickle(output_dir / f"{prefix}.pkl", {"allPairwiseMarginals": all_pairwise_marginals})
+    if not reduced_output:
+        save_pickle(output_dir / f"{prefix}.pkl", {"allPairwiseMarginals": all_pairwise_marginals})
     return user_data, all_pairwise_marginals
 
 
@@ -207,15 +209,17 @@ def run_pre_recombination_relationships(
     user_data: UserData,
     snp_data: np.ndarray,
     output_dir: Path,
+    reduced_output: bool = True,
 ) -> tuple[UserData, dict[str, Any]]:
     user_data = replace(user_data, output_dir=str(output_dir))
-    user_data, all_pairwise_marginals = inspect_cluster_relationships(user_data, snp_data, output_dir, False)
+    user_data, all_pairwise_marginals = inspect_cluster_relationships(user_data, snp_data, output_dir, False, reduced_output)
     cluster_dist = compute_cluster_distances(user_data, all_pairwise_marginals)
     user_data = replace(user_data, cluster_dist=cluster_dist)
     user_data = create_cluster_groups(user_data)
     user_data = lineage_similarities_to_lineage_structure(user_data, all_pairwise_marginals, 2)
     comparison_payload = {"allPairwiseMarginals": all_pairwise_marginals}
-    save_pickle(output_dir / "cluster_relationships.pkl", comparison_payload)
+    if not reduced_output:
+        save_pickle(output_dir / "cluster_relationships.pkl", comparison_payload)
     return replace(user_data, state="clusterRelationshipsInspected"), comparison_payload
 
 
@@ -223,10 +227,12 @@ def run_post_recombination_relationships(
     user_data: UserData,
     snp_data: np.ndarray,
     output_dir: Path,
+    reduced_output: bool = True,
 ) -> tuple[UserData, dict[str, Any]]:
     user_data = replace(user_data, output_dir=str(output_dir))
-    user_data, all_pairwise_marginals = inspect_cluster_relationships(user_data, snp_data, output_dir, True)
+    user_data, all_pairwise_marginals = inspect_cluster_relationships(user_data, snp_data, output_dir, True, reduced_output)
     user_data = lineage_similarities_to_lineage_structure(user_data, all_pairwise_marginals, 1)
     comparison_payload = {"allPairwiseMarginals": all_pairwise_marginals}
-    save_pickle(output_dir / "lineage_relationships.pkl", comparison_payload)
+    if not reduced_output:
+        save_pickle(output_dir / "lineage_relationships.pkl", comparison_payload)
     return replace(user_data, state="relationshipsReInspected"), comparison_payload
